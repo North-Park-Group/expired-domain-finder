@@ -57,7 +57,6 @@ final class AppState {
     func addActivity(_ message: String, type: ActivityType) {
         let entry = ActivityEntry(date: Date(), message: message, type: type)
         activityLog.append(entry)
-        // Keep last 200 entries to avoid unbounded growth
         if activityLog.count > 200 {
             activityLog.removeFirst(activityLog.count - 200)
         }
@@ -72,7 +71,6 @@ final class AppState {
             return
         }
 
-        // Normalize URLs
         let urls = rawURLs.map { u -> String in
             var u = u
             if !u.contains("://") { u = "https://" + u }
@@ -109,9 +107,52 @@ final class AppState {
         scanTask = Task { [weak self] in
             guard let self else { return }
 
+            // Stream for pipelining: crawl feeds domains, checker consumes them
+            let (domainStream, domainContinuation) = AsyncStream<(String, Set<String>)>.makeStream()
+
+            // Track all domain sources for result building
             var allDomainSources: [String: Set<String>] = [:]
             var allVisitedCount = 0
 
+            // Background checker task — runs concurrently with crawling
+            let checkerTask = Task { [weak self] in
+                guard let self else { return }
+                let concurrency = configSnapshot.checkWorkers
+                let retries = configSnapshot.retries
+
+                await withTaskGroup(of: (String, Set<String>, Bool).self) { group in
+                    var active = 0
+
+                    for await (domain, sources) in domainStream {
+                        if Task.isCancelled { break }
+
+                        // Drain completed checks to stay under concurrency limit
+                        while active >= concurrency {
+                            if let (d, srcs, available) = await group.next() {
+                                active -= 1
+                                await self.handleCheckResult(domain: d, available: available, sources: srcs)
+                            }
+                        }
+
+                        if Task.isCancelled { break }
+
+                        let d = domain
+                        let srcs = sources
+                        group.addTask {
+                            let available = await self.checkEngine.checkDomain(d, retries: retries)
+                            return (d, srcs, available)
+                        }
+                        active += 1
+                    }
+
+                    // Drain remaining checks
+                    for await (d, srcs, available) in group {
+                        await self.handleCheckResult(domain: d, available: available, sources: srcs)
+                    }
+                }
+            }
+
+            // Phase 1: Crawl — discovered domains are streamed to checker
             for (index, url) in urls.enumerated() {
                 guard !Task.isCancelled else { break }
 
@@ -165,82 +206,57 @@ final class AppState {
 
                 guard !Task.isCancelled else { break }
 
-                // Accumulate results
+                // Accumulate and feed new domains to checker
                 for (domain, sources) in crawlResult.domainSources {
                     allDomainSources[domain, default: []].formUnion(sources)
                 }
                 allVisitedCount += crawlResult.visited.count
+
+                // Filter and send newly discovered domains to the checker stream
+                for (domain, sources) in crawlResult.domainSources {
+                    if !ExcludedDomains.shouldExclude(domain: domain, extra: extraExcludes) {
+                        domainContinuation.yield((domain, sources))
+                    }
+                }
             }
+
+            // Signal no more domains coming
+            domainContinuation.finish()
+
+            let totalFiltered = allDomainSources.keys.filter {
+                !ExcludedDomains.shouldExclude(domain: $0, extra: extraExcludes)
+            }.count
+            let visitedSnapshot = allVisitedCount
+
+            await MainActor.run {
+                self.domainsToCheck = totalFiltered
+                self.totalPagesAtEnd = visitedSnapshot
+                self.phase = .checking
+                self.statusMessage = "Crawling complete — finishing domain checks..."
+                self.addActivity("Crawling complete. Waiting for \(totalFiltered - self.domainsChecked) remaining checks...", type: .info)
+            }
+
+            // Wait for checker to finish
+            await checkerTask.value
 
             guard !Task.isCancelled else {
                 await MainActor.run { self.phase = .cancelled }
                 return
             }
 
-            // Filter domains
-            var filtered: [String: Set<String>] = [:]
-            for (domain, sources) in allDomainSources {
-                if !ExcludedDomains.shouldExclude(domain: domain, extra: extraExcludes) {
-                    filtered[domain] = sources
-                }
-            }
-
-            let filteredCount = filtered.count
             await MainActor.run {
-                self.domainsToCheck = filteredCount
-                self.totalPagesAtEnd = allVisitedCount
-                self.statusMessage = "\(allVisitedCount) pages crawled, \(filteredCount) domains to check"
-                self.phase = .checking
-                self.addActivity("Crawling complete. Checking \(filteredCount) domains...", type: .info)
-            }
-
-            // Phase 2: Check domains
-            let sortedDomains = filtered.keys.sorted()
-            await withTaskGroup(of: (String, Bool).self) { group in
-                let concurrency = configSnapshot.checkWorkers
-                var active = 0
-
-                for domain in sortedDomains {
-                    if Task.isCancelled { break }
-
-                    if active >= concurrency {
-                        if let (checkedDomain, available) = await group.next() {
-                            active -= 1
-                            await self.handleCheckResult(domain: checkedDomain, available: available, sources: filtered)
-                        }
-                    }
-
-                    let d = domain
-                    let retries = configSnapshot.retries
-                    group.addTask {
-                        let available = await self.checkEngine.checkDomain(d, retries: retries)
-                        return (d, available)
-                    }
-                    active += 1
-                }
-
-                for await (checkedDomain, available) in group {
-                    await self.handleCheckResult(domain: checkedDomain, available: available, sources: filtered)
-                }
-            }
-
-            await MainActor.run {
-                if Task.isCancelled {
-                    self.phase = .cancelled
-                } else {
-                    self.statusMessage = "Scan complete: \(self.results.count) available domains found from \(self.totalPagesAtEnd) pages"
-                    self.phase = .done
-                    self.addActivity("Done! \(self.results.count) available domains found.", type: .info)
-                }
+                self.statusMessage = "Scan complete: \(self.results.count) available domains found from \(self.totalPagesAtEnd) pages"
+                self.phase = .done
+                self.addActivity("Done! \(self.results.count) available domains found.", type: .info)
             }
         }
     }
 
-    private func handleCheckResult(domain: String, available: Bool, sources: [String: Set<String>]) async {
+    private func handleCheckResult(domain: String, available: Bool, sources: Set<String>) async {
         await MainActor.run {
             self.domainsChecked += 1
             if available {
-                let srcs = sources[domain].map { Array($0).sorted() } ?? []
+                let srcs = Array(sources).sorted()
                 let result = DomainResult(domain: domain, linkCount: srcs.count, foundOn: srcs)
                 self.results.append(result)
                 self.results.sort { $0.linkCount > $1.linkCount || ($0.linkCount == $1.linkCount && $0.domain < $1.domain) }
