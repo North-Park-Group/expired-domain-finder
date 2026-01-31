@@ -222,6 +222,31 @@ struct ResultsTableView: View {
                     }
                     .width(50)
 
+                    TableColumn("History") { result in
+                        Button {
+                            if let url = URL(string: "https://web.archive.org/web/*/\(result.domain)") {
+                                NSWorkspace.shared.open(url)
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "clock.arrow.circlepath")
+                                    .font(.system(size: 11))
+                                Text("Wayback")
+                                    .font(.caption)
+                            }
+                            .foregroundStyle(Color.npAccent)
+                        }
+                        .buttonStyle(.plain)
+                        .onHover { hovering in
+                            if hovering {
+                                NSCursor.pointingHand.push()
+                            } else {
+                                NSCursor.pop()
+                            }
+                        }
+                    }
+                    .width(80)
+
                     TableColumn("Found On") { result in
                         Text(result.foundOnDisplay)
                             .font(.body)
@@ -248,6 +273,11 @@ struct ResultsTableView: View {
         }
         Button("WHOIS Lookup") {
             if let url = URL(string: "https://who.is/whois/\(domain)") {
+                NSWorkspace.shared.open(url)
+            }
+        }
+        Button("View on Wayback Machine") {
+            if let url = URL(string: "https://web.archive.org/web/*/\(domain)") {
                 NSWorkspace.shared.open(url)
             }
         }
