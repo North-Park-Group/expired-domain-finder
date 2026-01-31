@@ -1,0 +1,31 @@
+# Build
+.build/
+DerivedData/
+
+# Xcode
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+xcuserdata/
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Swift Package Manager
+Package.resolved
+
+# IDE
+.swiftpm/
+.vscode/
+.idea/
+
+# Claude
+.claude/
+
+# Python (legacy)
+__pycache__/
+*.pyc
+venv/
+
+# Misc
+*.csv
