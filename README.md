@@ -1,5 +1,11 @@
 # Expired Domain Finder
 
+![Platform](https://img.shields.io/badge/platform-macOS%2014%2B-blue)
+![Swift](https://img.shields.io/badge/Swift-5.9-orange)
+![License](https://img.shields.io/github/license/North-Park-Group/expired-domain-finder)
+![Release](https://img.shields.io/github/v/release/North-Park-Group/expired-domain-finder)
+![Tests](https://img.shields.io/badge/tests-35%20passing-brightgreen)
+
 **Find high-value expired domains hiding in any website's outbound links.**
 
 A native macOS app that crawls websites, discovers every external domain they link to, and checks which ones are available to register. Built for SEO teams who want to acquire domains with existing backlink equity.
