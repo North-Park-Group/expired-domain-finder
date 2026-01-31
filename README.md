@@ -4,10 +4,7 @@
 
 A native macOS app that crawls websites, discovers every external domain they link to, and checks which ones are available to register. Built for SEO teams who want to acquire domains with existing backlink equity.
 
-<!-- SCREENSHOTS -->
-<!-- ![App Screenshot](assets/screenshot-idle.png) -->
-<!-- ![Scanning](assets/screenshot-scanning.png) -->
-<!-- ![Results](assets/screenshot-results.png) -->
+![Expired Domain Finder](assets/screenshot.png)
 
 ---
 
