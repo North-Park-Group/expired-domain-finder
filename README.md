@@ -172,7 +172,7 @@ swift build -c release --arch arm64 --arch x86_64
 
 ## License
 
-MIT
+Free to use for whatever you want. If you fork it or build on it, a backlink or shoutout to [North Park Group](https://github.com/North-Park-Group) would be appreciated.
 
 ---
 
